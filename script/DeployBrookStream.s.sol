@@ -16,6 +16,9 @@ import {BrookStream} from "../src/BrookStream.sol";
 ///         Required env:
 ///           DEPLOYER_PRIVATE_KEY  hex-encoded private key with Arc testnet USDC for gas
 ///           USDC_ADDRESS          ERC20 token address (defaults to Arc testnet USDC)
+///
+///         On --broadcast: writes the deployed address to
+///         deployments/<chainId>.json so the UI / smoke-test script can pick it up.
 contract DeployBrookStream is Script {
     address internal constant DEFAULT_ARC_USDC = 0x3600000000000000000000000000000000000000;
 
@@ -33,5 +36,31 @@ contract DeployBrookStream is Script {
         vm.stopBroadcast();
 
         console2.log("BrookStream deployed at:", address(brook));
+        _writeDeployment(address(brook), usdc);
+    }
+
+    function _writeDeployment(address brookAddr, address usdc) internal {
+        string memory path = string.concat("deployments/", vm.toString(block.chainid), ".json");
+        string memory json = string.concat(
+            "{\n",
+            '  "chainId": ',
+            vm.toString(block.chainid),
+            ",\n",
+            '  "brookStream": "',
+            vm.toString(brookAddr),
+            '",\n',
+            '  "usdc": "',
+            vm.toString(usdc),
+            '",\n',
+            '  "blockNumber": ',
+            vm.toString(block.number),
+            ",\n",
+            '  "deployer": "',
+            vm.toString(msg.sender),
+            '"\n',
+            "}\n"
+        );
+        vm.writeFile(path, json);
+        console2.log("Deployment manifest written to:", path);
     }
 }
