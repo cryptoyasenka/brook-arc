@@ -29,7 +29,8 @@ no governance, no upgrade path, no fee, no admin keys.
 | Fee-on-transfer | Rejected at create time via balance-delta check |
 | Storage | One slot per stream (`address` + `address` + 2× `uint128` + 2× `uint64` + `bool`) |
 
-Full design rationale: [`../planning/CONTRACT-DESIGN-AUDIT.md`](../planning/CONTRACT-DESIGN-AUDIT.md).
+The contract is ~170 lines of Solidity 0.8.26; reading it end-to-end is the
+authoritative spec.
 
 ## Repository layout
 
@@ -113,8 +114,8 @@ Events: `StreamCreated`, `Withdrawn`, `Canceled`. Custom errors only — no reve
   custody. Read the contract end-to-end before composing on top.
 - **block.timestamp.** Used to compute elapsed time. Validators can nudge timestamps a
   few seconds either way; this is acceptable for a per-second linear stream because the
-  stored value is the withdrawn amount, not a cached time. Forge lints flag this — see
-  [`../planning/CONTRACT-DESIGN-AUDIT.md` §A7](../planning/CONTRACT-DESIGN-AUDIT.md#a7-blocktimestamp-равенство-соседних-блоков-arc-specific).
+  stored value is the withdrawn amount, not a cached time. Slither/Forge lints flag this
+  pattern — reviewed and accepted.
 - **uint64 endTime.** `startTime + duration` reverts on uint64 overflow (Solidity 0.8
   checked math). Tested: see `test_T14_EndTimeOverflow_Reverts`.
 - **Fee-on-transfer.** Rejected at create. USDC isn't fee-on-transfer; the check is a
