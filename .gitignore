@@ -1,0 +1,16 @@
+cache/
+out/
+broadcast/
+.env
+.env.*
+!.env.example
+
+# Foundry
+docs/
+node_modules/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
