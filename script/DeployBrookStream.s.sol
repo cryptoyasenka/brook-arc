@@ -25,7 +25,7 @@ contract DeployBrookStream is Script {
     function run() external returns (BrookStream brook) {
         address usdc = vm.envOr("USDC_ADDRESS", DEFAULT_ARC_USDC);
         require(usdc != address(0), "USDC address must be non-zero");
-        require(usdc.code.length > 0, "USDC must be a deployed contract on the active fork/network");
+        require(usdc != msg.sender, "USDC_ADDRESS equals deployer EOA - wrong env var");
 
         console2.log("Deploying BrookStream against USDC:", usdc);
         console2.log("Chain id:", block.chainid);
