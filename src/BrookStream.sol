@@ -112,7 +112,7 @@ contract BrookStream is ReentrancyGuard {
     ///         (cancel pays out immediately, leaves no balance for recipient).
     function withdrawable(uint256 streamId) public view returns (uint128) {
         Stream memory s = streams[streamId];
-        if (s.depositAmount == 0) return 0;
+        if (s.recipient == address(0)) return 0;
         if (s.canceled) return 0;
 
         if (block.timestamp >= s.endTime) {
