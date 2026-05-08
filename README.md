@@ -58,6 +58,9 @@ Static analysis (Slither): `slither .` — 0 medium+ findings.
 
 ## Web UI
 
+**Live demo:** https://brook-arc-ui.onrender.com (Render free tier — first request after
+inactivity may cold-start in ~50s).
+
 A Next.js + viem + wagmi + RainbowKit app lives in [`ui/`](./ui). It connects to the
 deployed contract on Arc testnet and lets you create, view, withdraw and cancel streams.
 
