@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: brook-arc-ui
+    runtime: node
+    plan: free
+    region: oregon
+    rootDir: ui
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NEXT_PUBLIC_WC_PROJECT_ID
+        value: brook-arc-dev

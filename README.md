@@ -56,6 +56,19 @@ ARC_FORK=1 forge test --match-contract Fork    # T17 against live Arc testnet
 
 Static analysis (Slither): `slither .` — 0 medium+ findings.
 
+## Web UI
+
+A Next.js + viem + wagmi + RainbowKit app lives in [`ui/`](./ui). It connects to the
+deployed contract on Arc testnet and lets you create, view, withdraw and cancel streams.
+
+```bash
+cd ui && npm install && npm run dev   # http://localhost:3000
+```
+
+One-click deploy of your own:
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/cryptoyasenka/brook-arc)
+
 ## Deploy
 
 ```bash
