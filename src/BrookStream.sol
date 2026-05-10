@@ -78,9 +78,8 @@ contract BrookStream is ReentrancyGuard {
         bytes32 r,
         bytes32 s_
     ) external nonReentrant returns (uint256 streamId) {
-        try IERC20Permit(address(USDC)).permit(msg.sender, address(this), amount, permitDeadline, v, r, s_) {
-            // permit succeeded
-        }
+        // Permit may have been frontrun and consumed; if so, fall back to existing allowance.
+        try IERC20Permit(address(USDC)).permit(msg.sender, address(this), amount, permitDeadline, v, r, s_) {}
         catch {
             if (USDC.allowance(msg.sender, address(this)) < amount) {
                 revert PermitFailedAndAllowanceInsufficient();
