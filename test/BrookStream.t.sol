@@ -9,6 +9,7 @@ import {BrookStream} from "../src/BrookStream.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {FeeOnTransferERC20} from "./mocks/FeeOnTransferERC20.sol";
 import {ReentrantERC20} from "./mocks/ReentrantERC20.sol";
+import {BlacklistERC20} from "./mocks/BlacklistERC20.sol";
 
 /// @notice Phase 3 test suite — covers T1–T16 from CONTRACT-DESIGN-AUDIT.md section D
 ///         plus fuzz invariants. T17 (fork) lives in BrookStream.fork.t.sol.
@@ -63,7 +64,7 @@ contract BrookStreamTest is Test {
     }
 
     // ------------------------------------------------------------------ T2
-    function test_T2_CancelMidStream_PaysBothImmediately() public {
+    function test_T2_CancelMidStream_CreditsPendingClaims() public {
         uint256 streamId = _create();
 
         vm.warp(block.timestamp + DURATION / 2);
@@ -72,6 +73,19 @@ contract BrookStreamTest is Test {
         emit BrookStream.Canceled(streamId, DEPOSIT / 2, DEPOSIT / 2);
         vm.prank(alice);
         brook.cancel(streamId);
+
+        // Funds stay in brook, accounted in pendingClaims (pull-pattern).
+        assertEq(brook.pendingClaims(bob), DEPOSIT / 2);
+        assertEq(brook.pendingClaims(alice), DEPOSIT / 2);
+        assertEq(usdc.balanceOf(address(brook)), DEPOSIT);
+        assertEq(usdc.balanceOf(bob), 0);
+        assertEq(usdc.balanceOf(alice), 9 * DEPOSIT);
+
+        // Each party pulls their share.
+        vm.prank(bob);
+        brook.claim(bob, DEPOSIT / 2);
+        vm.prank(alice);
+        brook.claim(alice, DEPOSIT / 2);
 
         assertEq(usdc.balanceOf(bob), DEPOSIT / 2);
         assertEq(usdc.balanceOf(alice), 9 * DEPOSIT + DEPOSIT / 2);
@@ -127,7 +141,9 @@ contract BrookStreamTest is Test {
     }
 
     // ------------------------------------------------------------------ T7
-    function test_T7_Reentrancy_OnCancel_Blocked() public {
+    function test_T7_Reentrancy_OnClaim_Blocked() public {
+        // cancel() no longer transfers, so it can't be reentered via token.transfer.
+        // The transfer surface moved to claim() — guard it there.
         ReentrantERC20 token = new ReentrantERC20();
         BrookStream brook2 = new BrookStream(IERC20(address(token)));
 
@@ -138,14 +154,16 @@ contract BrookStreamTest is Test {
         vm.prank(alice);
         uint256 sid = brook2.createStream(bob, DEPOSIT, DURATION);
 
-        // arm: when token.transfer fires (during cancel payout), re-enter cancel
-        token.arm(address(brook2), abi.encodeCall(BrookStream.cancel, (sid)));
-
         vm.warp(block.timestamp + DURATION / 2);
         vm.prank(alice);
-        // Inner reentrant cancel hits ReentrancyGuardReentrantCall, mock bubbles it up.
+        brook2.cancel(sid); // credits pendingClaims, no transfer
+
+        // arm: when token.transfer fires (during claim), re-enter claim
+        token.arm(address(brook2), abi.encodeCall(BrookStream.claim, (alice, 1)));
+
+        vm.prank(alice);
         vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
-        brook2.cancel(sid);
+        brook2.claim(alice, DEPOSIT / 2);
     }
 
     function test_T7_Reentrancy_OnWithdraw_Blocked() public {
@@ -319,6 +337,11 @@ contract BrookStreamTest is Test {
 
         vm.prank(alice);
         brook.cancel(streamId);
+        assertEq(brook.pendingClaims(bob), DEPOSIT);
+        assertEq(brook.pendingClaims(alice), 0);
+
+        vm.prank(bob);
+        brook.claim(bob, DEPOSIT);
         assertEq(usdc.balanceOf(bob), DEPOSIT);
         assertEq(usdc.balanceOf(alice), 9 * DEPOSIT);
     }
@@ -329,8 +352,13 @@ contract BrookStreamTest is Test {
         vm.prank(alice);
         brook.cancel(streamId);
 
+        assertEq(brook.pendingClaims(alice), DEPOSIT);
+        assertEq(brook.pendingClaims(bob), 0);
+
+        vm.prank(alice);
+        brook.claim(alice, DEPOSIT);
         assertEq(usdc.balanceOf(bob), 0);
-        assertEq(usdc.balanceOf(alice), 10 * DEPOSIT); // full refund
+        assertEq(usdc.balanceOf(alice), 10 * DEPOSIT);
         assertEq(usdc.balanceOf(address(brook)), 0);
     }
 
@@ -436,13 +464,143 @@ contract BrookStreamTest is Test {
         brook.withdraw(streamId, bob, DEPOSIT / 4);
 
         vm.warp(block.timestamp + DURATION / 4);
-        // accrued = 50%, withdrawn = 25%, so on cancel bob gets +25%, alice gets 50%
+        // accrued = 50%, withdrawn = 25%, so on cancel bob is credited +25%, alice gets 50%
         vm.prank(alice);
         brook.cancel(streamId);
+
+        assertEq(brook.pendingClaims(bob), DEPOSIT / 4);
+        assertEq(brook.pendingClaims(alice), DEPOSIT / 2);
+
+        vm.prank(bob);
+        brook.claim(bob, DEPOSIT / 4);
+        vm.prank(alice);
+        brook.claim(alice, DEPOSIT / 2);
 
         assertEq(usdc.balanceOf(bob), DEPOSIT / 2);
         assertEq(usdc.balanceOf(alice), 9 * DEPOSIT + DEPOSIT / 2);
         assertEq(usdc.balanceOf(address(brook)), 0);
+    }
+
+    // ====================================================== CLAIM / DoS ===
+
+    /// @notice The headline fix: cancel must succeed even when the recipient is
+    ///         USDC-blacklisted, so the sender's funds aren't held hostage.
+    function test_Cancel_BlacklistedRecipient_DoesNotBlockSender() public {
+        BlacklistERC20 blUsdc = new BlacklistERC20("USD Coin", "USDC", 6);
+        BrookStream brook2 = new BrookStream(IERC20(address(blUsdc)));
+
+        blUsdc.mint(alice, DEPOSIT);
+        vm.prank(alice);
+        blUsdc.approve(address(brook2), type(uint256).max);
+
+        vm.prank(alice);
+        uint256 sid = brook2.createStream(bob, DEPOSIT, DURATION);
+
+        // Bob gets blacklisted mid-stream (USDC enforcement action).
+        blUsdc.setBlacklisted(bob, true);
+
+        vm.warp(block.timestamp + DURATION / 2);
+
+        // Cancel must succeed — no transfers happen, only accounting.
+        vm.prank(alice);
+        brook2.cancel(sid);
+
+        assertEq(brook2.pendingClaims(alice), DEPOSIT / 2);
+        assertEq(brook2.pendingClaims(bob), DEPOSIT / 2);
+
+        // Alice can pull her refund unconditionally.
+        vm.prank(alice);
+        brook2.claim(alice, DEPOSIT / 2);
+        assertEq(blUsdc.balanceOf(alice), DEPOSIT / 2);
+
+        // Bob's claim to himself reverts (token-level), but he can route to a
+        // non-blacklisted address — the contract doesn't gate him.
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(BlacklistERC20.Blacklisted.selector, bob));
+        brook2.claim(bob, DEPOSIT / 2);
+
+        vm.prank(bob);
+        brook2.claim(carol, DEPOSIT / 2);
+        assertEq(blUsdc.balanceOf(carol), DEPOSIT / 2);
+    }
+
+    function test_Claim_HappyPath() public {
+        uint256 streamId = _create();
+        vm.warp(block.timestamp + DURATION / 2);
+        vm.prank(alice);
+        brook.cancel(streamId);
+
+        vm.expectEmit(true, true, false, true);
+        emit BrookStream.Claimed(bob, bob, DEPOSIT / 2);
+        vm.prank(bob);
+        brook.claim(bob, DEPOSIT / 2);
+
+        assertEq(brook.pendingClaims(bob), 0);
+        assertEq(usdc.balanceOf(bob), DEPOSIT / 2);
+    }
+
+    function test_Claim_PartialThenRest() public {
+        uint256 streamId = _create();
+        vm.warp(block.timestamp + DURATION / 2);
+        vm.prank(alice);
+        brook.cancel(streamId);
+
+        vm.prank(bob);
+        brook.claim(bob, DEPOSIT / 4);
+        assertEq(brook.pendingClaims(bob), DEPOSIT / 4);
+
+        vm.prank(bob);
+        brook.claim(bob, DEPOSIT / 4);
+        assertEq(brook.pendingClaims(bob), 0);
+        assertEq(usdc.balanceOf(bob), DEPOSIT / 2);
+    }
+
+    function test_Claim_AccumulatesAcrossStreams() public {
+        uint256 s0 = _create();
+        uint256 s1 = _create();
+        vm.warp(block.timestamp + DURATION / 2);
+
+        vm.prank(alice);
+        brook.cancel(s0);
+        vm.prank(alice);
+        brook.cancel(s1);
+
+        // Two cancels at midstream → bob credited DEPOSIT total.
+        assertEq(brook.pendingClaims(bob), DEPOSIT);
+        assertEq(brook.pendingClaims(alice), DEPOSIT);
+
+        vm.prank(bob);
+        brook.claim(bob, DEPOSIT);
+        assertEq(usdc.balanceOf(bob), DEPOSIT);
+    }
+
+    function test_Claim_ZeroAmount_Reverts() public {
+        vm.prank(alice);
+        vm.expectRevert(BrookStream.InvalidAmount.selector);
+        brook.claim(alice, 0);
+    }
+
+    function test_Claim_ToZeroAddress_Reverts() public {
+        vm.prank(alice);
+        vm.expectRevert(BrookStream.InvalidRecipient.selector);
+        brook.claim(address(0), 1);
+    }
+
+    function test_Claim_InsufficientPending_Reverts() public {
+        vm.prank(alice);
+        vm.expectRevert(BrookStream.InsufficientClaim.selector);
+        brook.claim(alice, 1);
+    }
+
+    function test_Claim_ExceedsPending_Reverts() public {
+        uint256 streamId = _create();
+        vm.warp(block.timestamp + DURATION / 2);
+        vm.prank(alice);
+        brook.cancel(streamId);
+
+        vm.prank(bob);
+        vm.expectRevert(BrookStream.InsufficientClaim.selector);
+        brook.claim(bob, DEPOSIT / 2 + 1);
     }
 
     // ============================================================ FUZZ ===
@@ -468,14 +626,14 @@ contract BrookStreamTest is Test {
         }
     }
 
-    /// @dev cancel at any point preserves total: alice + bob + brook == amount.
+    /// @dev cancel at any point preserves total: pendingClaims[alice] + pendingClaims[bob] == amount,
+    ///      brook holds exactly that amount in USDC (pull-pattern).
     function testFuzz_Cancel_Conservation(uint128 amount, uint64 duration, uint64 elapsed) public {
         amount = uint128(bound(uint256(amount), 1, type(uint128).max / 2));
         duration = uint64(bound(uint256(duration), 1, 365 days));
         elapsed = uint64(bound(uint256(elapsed), 0, uint256(duration) * 2));
 
         usdc.mint(alice, amount);
-        uint256 aliceBefore = usdc.balanceOf(alice);
 
         vm.prank(alice);
         uint256 sid = brook.createStream(bob, amount, duration);
@@ -484,13 +642,12 @@ contract BrookStreamTest is Test {
         vm.prank(alice);
         brook.cancel(sid);
 
-        uint256 total =
-            usdc.balanceOf(alice) - (aliceBefore - amount) + usdc.balanceOf(bob) + usdc.balanceOf(address(brook));
-        assertEq(total, amount, "cancel preserves total deposit");
-        assertEq(usdc.balanceOf(address(brook)), 0, "brook holds nothing after cancel");
+        uint256 totalCredited = uint256(brook.pendingClaims(alice)) + uint256(brook.pendingClaims(bob));
+        assertEq(totalCredited, amount, "cancel credits total deposit");
+        assertEq(usdc.balanceOf(address(brook)), amount, "brook holds full amount until claims");
     }
 
-    /// @dev partial withdraw + cancel: combined balances == deposit, no dust on contract.
+    /// @dev partial withdraw + cancel + claim: combined external balances == deposit, no dust.
     function testFuzz_PartialWithdrawThenCancel_Conservation(
         uint128 amount,
         uint64 duration,
@@ -519,9 +676,21 @@ contract BrookStreamTest is Test {
         vm.prank(alice);
         brook.cancel(sid);
 
+        // Drain pending claims to external balances.
+        uint128 alicePending = brook.pendingClaims(alice);
+        uint128 bobPending = brook.pendingClaims(bob);
+        if (alicePending > 0) {
+            vm.prank(alice);
+            brook.claim(alice, alicePending);
+        }
+        if (bobPending > 0) {
+            vm.prank(bob);
+            brook.claim(bob, bobPending);
+        }
+
         uint256 total =
             usdc.balanceOf(alice) - (aliceBefore - amount) + usdc.balanceOf(bob) + usdc.balanceOf(address(brook));
-        assertEq(total, amount, "withdraw+cancel preserves total");
+        assertEq(total, amount, "withdraw+cancel+claim preserves total");
         assertEq(usdc.balanceOf(address(brook)), 0, "no dust");
     }
 
