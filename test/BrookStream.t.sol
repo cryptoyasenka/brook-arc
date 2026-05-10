@@ -367,6 +367,67 @@ contract BrookStreamTest is Test {
         assertEq(usdc.balanceOf(bob), DEPOSIT);
     }
 
+    function test_CreateStreamWithPermit_FrontrunSurvives() public {
+        uint256 alicePk = 0xA11CE;
+        address alicePerm = vm.addr(alicePk);
+        usdc.mint(alicePerm, DEPOSIT);
+
+        uint256 deadline = block.timestamp + 1 hours;
+        uint256 nonce = usdc.nonces(alicePerm);
+
+        bytes32 structHash = keccak256(
+            abi.encode(
+                keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)"),
+                alicePerm,
+                address(brook),
+                uint256(DEPOSIT),
+                nonce,
+                deadline
+            )
+        );
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", usdc.DOMAIN_SEPARATOR(), structHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(alicePk, digest);
+
+        // Attacker grabs (v,r,s) from mempool and submits permit() directly to USDC first.
+        vm.prank(carol);
+        usdc.permit(alicePerm, address(brook), DEPOSIT, deadline, v, r, s);
+        assertEq(usdc.allowance(alicePerm, address(brook)), DEPOSIT);
+
+        // Victim's tx still lands successfully — try/catch + allowance check covers the grief.
+        vm.prank(alicePerm);
+        uint256 streamId = brook.createStreamWithPermit(bob, DEPOSIT, DURATION, deadline, v, r, s);
+        assertEq(streamId, 0);
+        assertEq(usdc.balanceOf(address(brook)), DEPOSIT);
+        assertEq(usdc.balanceOf(alicePerm), 0);
+    }
+
+    function test_CreateStreamWithPermit_RevertsWhenPermitFailsAndAllowanceShort() public {
+        uint256 alicePk = 0xA11CE;
+        address alicePerm = vm.addr(alicePk);
+        usdc.mint(alicePerm, DEPOSIT);
+
+        uint256 deadline = block.timestamp + 1 hours;
+
+        // Sign with the WRONG nonce so permit always reverts and no allowance is set.
+        uint256 wrongNonce = usdc.nonces(alicePerm) + 99;
+        bytes32 structHash = keccak256(
+            abi.encode(
+                keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)"),
+                alicePerm,
+                address(brook),
+                uint256(DEPOSIT),
+                wrongNonce,
+                deadline
+            )
+        );
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", usdc.DOMAIN_SEPARATOR(), structHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(alicePk, digest);
+
+        vm.prank(alicePerm);
+        vm.expectRevert(BrookStream.PermitFailedAndAllowanceInsufficient.selector);
+        brook.createStreamWithPermit(bob, DEPOSIT, DURATION, deadline, v, r, s);
+    }
+
     function test_CancelAfterPartialWithdraw_NoDoublePay() public {
         uint256 streamId = _create();
         vm.warp(block.timestamp + DURATION / 4);

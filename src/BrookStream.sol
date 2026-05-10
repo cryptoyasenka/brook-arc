@@ -37,6 +37,7 @@ contract BrookStream is ReentrancyGuard {
     error InsufficientWithdrawable();
     error StreamNotFound();
     error FeeOnTransferNotSupported();
+    error PermitFailedAndAllowanceInsufficient();
 
     event StreamCreated(
         uint256 indexed streamId,
@@ -64,7 +65,10 @@ contract BrookStream is ReentrancyGuard {
     }
 
     /// @notice Create stream + pull USDC via EIP-2612 permit signature in one tx.
-    /// @dev Spender = address(this), value = amount. permit may revert with its own message.
+    /// @dev Frontrun-safe: if an attacker copies (v,r,s) from mempool and submits
+    ///      permit() directly on USDC first, our permit call reverts on
+    ///      already-used nonce — but the allowance is in place, so we still proceed.
+    ///      We revert only when permit failed AND allowance is genuinely insufficient.
     function createStreamWithPermit(
         address recipient,
         uint128 amount,
@@ -74,7 +78,13 @@ contract BrookStream is ReentrancyGuard {
         bytes32 r,
         bytes32 s_
     ) external nonReentrant returns (uint256 streamId) {
-        IERC20Permit(address(USDC)).permit(msg.sender, address(this), amount, permitDeadline, v, r, s_);
+        try IERC20Permit(address(USDC)).permit(msg.sender, address(this), amount, permitDeadline, v, r, s_) {
+            // permit succeeded
+        } catch {
+            if (USDC.allowance(msg.sender, address(this)) < amount) {
+                revert PermitFailedAndAllowanceInsufficient();
+            }
+        }
         return _createStream(msg.sender, recipient, amount, duration);
     }
 
