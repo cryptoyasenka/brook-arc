@@ -9,7 +9,9 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 /// @title  Brook — USDC streaming primitive for Arc
 /// @notice Linear, per-second USDC streams from sender to recipient.
 ///         End-flush dust strategy (no stored ratePerSecond).
-///         Cancel pays both parties immediately. nonReentrant on all state-mutating paths.
+///         Cancel uses pull-pattern: credits both parties to pendingClaims so a
+///         USDC blacklist on one side can't grief the other. nonReentrant on all
+///         state-mutating paths.
 contract BrookStream is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -28,6 +30,11 @@ contract BrookStream is ReentrancyGuard {
     mapping(uint256 => Stream) public streams;
     uint256 public nextStreamId;
 
+    /// @notice Pull-pattern balance credited by cancel(). Either party calls claim()
+    ///         to withdraw their share. A USDC blacklist on the counterparty cannot
+    ///         block a cancel because cancel performs no transfers.
+    mapping(address => uint128) public pendingClaims;
+
     error InvalidRecipient();
     error InvalidAmount();
     error InvalidDuration();
@@ -35,6 +42,7 @@ contract BrookStream is ReentrancyGuard {
     error NotRecipient();
     error AlreadyCanceled();
     error InsufficientWithdrawable();
+    error InsufficientClaim();
     error StreamNotFound();
     error FeeOnTransferNotSupported();
     error PermitFailedAndAllowanceInsufficient();
@@ -49,6 +57,7 @@ contract BrookStream is ReentrancyGuard {
     );
     event Withdrawn(uint256 indexed streamId, address indexed to, uint128 amount);
     event Canceled(uint256 indexed streamId, uint128 senderRefund, uint128 recipientPayout);
+    event Claimed(address indexed claimant, address indexed to, uint128 amount);
 
     constructor(IERC20 usdc) {
         USDC = usdc;
@@ -153,7 +162,11 @@ contract BrookStream is ReentrancyGuard {
     }
 
     /// @notice Sender cancels stream. Recipient gets accrued, sender gets remainder.
-    /// @dev Pays both parties immediately. After cancel, withdrawable() returns 0.
+    /// @dev Performs no token transfers. Both parties' balances are credited to
+    ///      `pendingClaims` and must be pulled via `claim()`. This makes cancel
+    ///      DoS-proof against a USDC blacklist on either party. After cancel,
+    ///      `withdrawable()` returns 0 — the recipient's accrued share moved to
+    ///      `pendingClaims[recipient]`.
     function cancel(uint256 streamId) external nonReentrant {
         Stream storage s = streams[streamId];
         if (s.recipient == address(0)) revert StreamNotFound();
@@ -175,9 +188,24 @@ contract BrookStream is ReentrancyGuard {
         s.canceled = true;
         s.withdrawn = streamed;
 
-        if (recipientPayout > 0) USDC.safeTransfer(s.recipient, recipientPayout);
-        if (senderRefund > 0) USDC.safeTransfer(s.sender, senderRefund);
+        if (recipientPayout > 0) pendingClaims[s.recipient] += recipientPayout;
+        if (senderRefund > 0) pendingClaims[s.sender] += senderRefund;
 
         emit Canceled(streamId, senderRefund, recipientPayout);
+    }
+
+    /// @notice Pull `amount` USDC from caller's pending balance to `to`.
+    ///         Pending balance accumulates from cancel() credits.
+    function claim(address to, uint128 amount) external nonReentrant {
+        if (to == address(0)) revert InvalidRecipient();
+        if (amount == 0) revert InvalidAmount();
+
+        uint128 pending = pendingClaims[msg.sender];
+        if (amount > pending) revert InsufficientClaim();
+
+        pendingClaims[msg.sender] = pending - amount;
+        USDC.safeTransfer(to, amount);
+
+        emit Claimed(msg.sender, to, amount);
     }
 }
