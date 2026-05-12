@@ -1,17 +1,25 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { isAddress, maxUint256 } from 'viem';
 import {
   useAccount,
   useReadContract,
   useWaitForTransactionReceipt,
+  useWatchContractEvent,
   useWriteContract,
 } from 'wagmi';
 import { brookAbi } from '@/lib/brookAbi';
 import { usdcAbi } from '@/lib/usdcAbi';
 import { BROOK_ADDRESS, USDC_ADDRESS } from '@/lib/addresses';
 import { formatUsdc, parseUsdc } from '@/lib/format';
+
+// How long after a successful StreamCreated event we suppress a (potentially stale)
+// wagmi error. Covers the Rabby × Arc custom-network preflight quirk where
+// useWriteContract surfaces an error even though the tx confirmed on-chain.
+const SUCCESS_SUPPRESSION_MS = 60_000;
+// How long a click is considered "in flight" for matching against incoming events.
+const CLICK_WINDOW_MS = 5 * 60_000;
 
 const DURATION_PRESETS: { label: string; seconds: number }[] = [
   { label: '2 min', seconds: 120 },
@@ -27,6 +35,10 @@ export function CreateStream({ onCreated }: { onCreated?: () => void }) {
   const [amountStr, setAmountStr] = useState('');
   const [durationSec, setDurationSec] = useState<number>(120);
   const [error, setError] = useState<string | null>(null);
+  const [createdAt, setCreatedAt] = useState<number | null>(null);
+  const [approvedAt, setApprovedAt] = useState<number | null>(null);
+  const createClickedAt = useRef<number>(0);
+  const approveClickedAt = useRef<number>(0);
 
   const parsed = (() => {
     if (!amountStr) return null;
@@ -77,6 +89,7 @@ export function CreateStream({ onCreated }: { onCreated?: () => void }) {
 
   const onApprove = () => {
     setError(null);
+    approveClickedAt.current = Date.now();
     approve.writeContract({
       address: USDC_ADDRESS,
       abi: usdcAbi,
@@ -91,6 +104,7 @@ export function CreateStream({ onCreated }: { onCreated?: () => void }) {
       setError('fill all fields');
       return;
     }
+    createClickedAt.current = Date.now();
     create.writeContract({
       address: BROOK_ADDRESS,
       abi: brookAbi,
@@ -99,15 +113,81 @@ export function CreateStream({ onCreated }: { onCreated?: () => void }) {
     });
   };
 
-  useEffect(() => {
-    if (!createReceipt.isSuccess) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset form when on-chain tx confirms; wagmi v2 only surfaces this as derived state
+  const markCreated = () => {
+    setCreatedAt(Date.now());
     setRecipient('');
     setAmountStr('');
+    setError(null);
     onCreated?.();
     create.reset();
+  };
+
+  // Receipt path — works on normal wallets where useWriteContract returns a tx hash.
+  useEffect(() => {
+    if (!createReceipt.isSuccess) return;
+    if (createdAt && Date.now() - createdAt < SUCCESS_SUPPRESSION_MS) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- bridging wagmi receipt state to local UI state
+    markCreated();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [createReceipt.isSuccess]);
+
+  // Event path — required for Rabby × Arc where useWriteContract surfaces a
+  // false preflight error even though the tx submitted and confirmed on-chain.
+  // We filter by indexed `sender = address`, so we only see streams this wallet
+  // created. We additionally guard with `createClickedAt` so historical events
+  // arriving on subscription bootstrap can't be mistaken for the current attempt.
+  useWatchContractEvent({
+    address: BROOK_ADDRESS,
+    abi: brookAbi,
+    eventName: 'StreamCreated',
+    args: address ? { sender: address } : undefined,
+    enabled: !!address,
+    onLogs: () => {
+      if (Date.now() - createClickedAt.current > CLICK_WINDOW_MS) return;
+      if (createdAt && Date.now() - createdAt < SUCCESS_SUPPRESSION_MS) return;
+      markCreated();
+    },
+  });
+
+  // Mirror for approve — Rabby × Arc preflight error fires on approve too.
+  useEffect(() => {
+    if (!approveReceipt.isSuccess) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- bridging wagmi receipt state to local UI state
+    setApprovedAt(Date.now());
+    approve.reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [approveReceipt.isSuccess]);
+
+  useWatchContractEvent({
+    address: USDC_ADDRESS,
+    abi: usdcAbi,
+    eventName: 'Approval',
+    args: address ? { owner: address, spender: BROOK_ADDRESS } : undefined,
+    enabled: !!address,
+    onLogs: () => {
+      if (Date.now() - approveClickedAt.current > CLICK_WINDOW_MS) return;
+      if (approvedAt && Date.now() - approvedAt < SUCCESS_SUPPRESSION_MS) return;
+      setApprovedAt(Date.now());
+      void refetchAllowance();
+      approve.reset();
+    },
+  });
+
+  // Force a re-render after the suppression window so stale success banners drop off.
+  useEffect(() => {
+    if (createdAt === null) return;
+    const t = setTimeout(() => setCreatedAt(null), SUCCESS_SUPPRESSION_MS);
+    return () => clearTimeout(t);
+  }, [createdAt]);
+  useEffect(() => {
+    if (approvedAt === null) return;
+    const t = setTimeout(() => setApprovedAt(null), SUCCESS_SUPPRESSION_MS);
+    return () => clearTimeout(t);
+  }, [approvedAt]);
+
+  const recentCreateSuccess = createdAt !== null;
+  const recentApproveSuccess = approvedAt !== null;
+  const suppressError = recentCreateSuccess || recentApproveSuccess;
 
   return (
     <section className="rounded-2xl border border-neutral-800 bg-neutral-900/40 p-6">
@@ -210,10 +290,16 @@ export function CreateStream({ onCreated }: { onCreated?: () => void }) {
           </button>
         )}
 
-        {(approve.error || create.error || error) && (
+        {!suppressError && (approve.error || create.error || error) && (
           <div className="text-xs text-red-400 break-words">
             {error ?? approve.error?.message ?? create.error?.message}
           </div>
+        )}
+        {recentCreateSuccess && (
+          <div className="text-xs text-emerald-400">stream created on-chain</div>
+        )}
+        {recentApproveSuccess && !needsApprove && !recentCreateSuccess && (
+          <div className="text-xs text-emerald-400">USDC approved</div>
         )}
       </div>
     </section>

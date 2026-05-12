@@ -1,15 +1,22 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   useAccount,
   useReadContract,
   useWaitForTransactionReceipt,
+  useWatchContractEvent,
   useWriteContract,
 } from 'wagmi';
 import { brookAbi } from '@/lib/brookAbi';
 import { BROOK_ADDRESS } from '@/lib/addresses';
 import { formatDuration, formatUsdc, shortAddr } from '@/lib/format';
+
+// Match CreateStream's suppression window — wagmi error may fire even though the
+// tx confirmed on-chain (Rabby × Arc preflight quirk). Show success when an
+// on-chain event arrives, ignore the stale error for this many ms after.
+const SUCCESS_SUPPRESSION_MS = 60_000;
+const CLICK_WINDOW_MS = 5 * 60_000;
 
 type StreamTuple = readonly [
   `0x${string}`, // sender
@@ -58,13 +65,81 @@ export function StreamCard({
   const cancelTx = useWriteContract();
   const cancelReceipt = useWaitForTransactionReceipt({ hash: cancelTx.data });
 
+  const [withdrewAt, setWithdrewAt] = useState<number | null>(null);
+  const [canceledAt, setCanceledAt] = useState<number | null>(null);
+  const withdrawClickedAt = useRef<number>(0);
+  const cancelClickedAt = useRef<number>(0);
+
+  const markWithdrew = () => {
+    setWithdrewAt(Date.now());
+    void refetchStream();
+    void refetchWithdrawable();
+    onChange?.();
+    withdrawTx.reset();
+  };
+  const markCanceled = () => {
+    setCanceledAt(Date.now());
+    void refetchStream();
+    void refetchWithdrawable();
+    onChange?.();
+    cancelTx.reset();
+  };
+
+  // Receipt path (normal wallets).
   useEffect(() => {
-    if (withdrawReceipt.isSuccess || cancelReceipt.isSuccess) {
-      void refetchStream();
-      void refetchWithdrawable();
-      onChange?.();
-    }
-  }, [withdrawReceipt.isSuccess, cancelReceipt.isSuccess, refetchStream, refetchWithdrawable, onChange]);
+    if (!withdrawReceipt.isSuccess) return;
+    if (withdrewAt && Date.now() - withdrewAt < SUCCESS_SUPPRESSION_MS) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- bridging wagmi receipt state to local UI state
+    markWithdrew();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [withdrawReceipt.isSuccess]);
+  useEffect(() => {
+    if (!cancelReceipt.isSuccess) return;
+    if (canceledAt && Date.now() - canceledAt < SUCCESS_SUPPRESSION_MS) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- bridging wagmi receipt state to local UI state
+    markCanceled();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cancelReceipt.isSuccess]);
+
+  // Event path (Rabby × Arc). Scope by streamId — both events index it.
+  useWatchContractEvent({
+    address: BROOK_ADDRESS,
+    abi: brookAbi,
+    eventName: 'Withdrawn',
+    args: { streamId },
+    onLogs: () => {
+      if (Date.now() - withdrawClickedAt.current > CLICK_WINDOW_MS) return;
+      if (withdrewAt && Date.now() - withdrewAt < SUCCESS_SUPPRESSION_MS) return;
+      markWithdrew();
+    },
+  });
+  useWatchContractEvent({
+    address: BROOK_ADDRESS,
+    abi: brookAbi,
+    eventName: 'Canceled',
+    args: { streamId },
+    onLogs: () => {
+      if (Date.now() - cancelClickedAt.current > CLICK_WINDOW_MS) return;
+      if (canceledAt && Date.now() - canceledAt < SUCCESS_SUPPRESSION_MS) return;
+      markCanceled();
+    },
+  });
+
+  // Time-decay success banners.
+  useEffect(() => {
+    if (withdrewAt === null) return;
+    const t = setTimeout(() => setWithdrewAt(null), SUCCESS_SUPPRESSION_MS);
+    return () => clearTimeout(t);
+  }, [withdrewAt]);
+  useEffect(() => {
+    if (canceledAt === null) return;
+    const t = setTimeout(() => setCanceledAt(null), SUCCESS_SUPPRESSION_MS);
+    return () => clearTimeout(t);
+  }, [canceledAt]);
+
+  const recentWithdrawSuccess = withdrewAt !== null;
+  const recentCancelSuccess = canceledAt !== null;
+  const suppressError = recentWithdrawSuccess || recentCancelSuccess;
 
   if (!stream) {
     return (
@@ -150,14 +225,15 @@ export function StreamCard({
       <div className="flex gap-2 pt-1">
         {isRecipient && !isClosed && (
           <button
-            onClick={() =>
+            onClick={() => {
+              withdrawClickedAt.current = Date.now();
               withdrawTx.writeContract({
                 address: BROOK_ADDRESS,
                 abi: brookAbi,
                 functionName: 'withdraw',
                 args: [streamId, recipient, withdrawable ?? 0n],
-              })
-            }
+              });
+            }}
             disabled={
               !withdrawable || withdrawable === 0n || withdrawTx.isPending || withdrawReceipt.isLoading
             }
@@ -172,14 +248,15 @@ export function StreamCard({
         )}
         {isSender && !isClosed && (
           <button
-            onClick={() =>
+            onClick={() => {
+              cancelClickedAt.current = Date.now();
               cancelTx.writeContract({
                 address: BROOK_ADDRESS,
                 abi: brookAbi,
                 functionName: 'cancel',
                 args: [streamId],
-              })
-            }
+              });
+            }}
             disabled={cancelTx.isPending || cancelReceipt.isLoading}
             className="flex-1 py-2 rounded-md border border-red-500/50 text-red-400 font-medium text-sm hover:bg-red-500/10 disabled:opacity-40 disabled:cursor-not-allowed transition"
           >
@@ -192,10 +269,16 @@ export function StreamCard({
         )}
       </div>
 
-      {(withdrawTx.error || cancelTx.error) && (
+      {!suppressError && (withdrawTx.error || cancelTx.error) && (
         <div className="text-xs text-red-400 break-words">
           {withdrawTx.error?.message ?? cancelTx.error?.message}
         </div>
+      )}
+      {recentWithdrawSuccess && (
+        <div className="text-xs text-emerald-400">withdraw confirmed</div>
+      )}
+      {recentCancelSuccess && (
+        <div className="text-xs text-emerald-400">stream canceled</div>
       )}
     </div>
   );
