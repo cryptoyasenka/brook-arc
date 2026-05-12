@@ -43,14 +43,4 @@ export const usdcAbi = [
     ],
     anonymous: false,
   },
-  {
-    type: 'event',
-    name: 'Transfer',
-    inputs: [
-      { name: 'from', type: 'address', indexed: true },
-      { name: 'to', type: 'address', indexed: true },
-      { name: 'value', type: 'uint256', indexed: false },
-    ],
-    anonymous: false,
-  },
 ] as const;

@@ -17,7 +17,7 @@ import { formatUsdc, parseUsdc } from '@/lib/format';
 // How long after a successful StreamCreated event we suppress a (potentially stale)
 // wagmi error. Covers the Rabby × Arc custom-network preflight quirk where
 // useWriteContract surfaces an error even though the tx confirmed on-chain.
-const SUCCESS_SUPPRESSION_MS = 60_000;
+const SUCCESS_SUPPRESSION_MS = 90_000;
 // How long a click is considered "in flight" for matching against incoming events.
 const CLICK_WINDOW_MS = 5 * 60_000;
 
@@ -81,12 +81,6 @@ export function CreateStream({ onCreated }: { onCreated?: () => void }) {
   const create = useWriteContract();
   const createReceipt = useWaitForTransactionReceipt({ hash: create.data });
 
-  useEffect(() => {
-    if (approveReceipt.isSuccess) {
-      void refetchAllowance();
-    }
-  }, [approveReceipt.isSuccess, refetchAllowance]);
-
   const onApprove = () => {
     setError(null);
     approveClickedAt.current = Date.now();
@@ -120,6 +114,7 @@ export function CreateStream({ onCreated }: { onCreated?: () => void }) {
     setError(null);
     onCreated?.();
     create.reset();
+    createClickedAt.current = 0;
   };
 
   // Receipt path — works on normal wallets where useWriteContract returns a tx hash.
@@ -154,6 +149,7 @@ export function CreateStream({ onCreated }: { onCreated?: () => void }) {
     if (!approveReceipt.isSuccess) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- bridging wagmi receipt state to local UI state
     setApprovedAt(Date.now());
+    void refetchAllowance();
     approve.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [approveReceipt.isSuccess]);
@@ -170,6 +166,7 @@ export function CreateStream({ onCreated }: { onCreated?: () => void }) {
       setApprovedAt(Date.now());
       void refetchAllowance();
       approve.reset();
+      approveClickedAt.current = 0;
     },
   });
 

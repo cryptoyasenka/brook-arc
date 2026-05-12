@@ -15,7 +15,7 @@ import { formatDuration, formatUsdc, shortAddr } from '@/lib/format';
 // Match CreateStream's suppression window — wagmi error may fire even though the
 // tx confirmed on-chain (Rabby × Arc preflight quirk). Show success when an
 // on-chain event arrives, ignore the stale error for this many ms after.
-const SUCCESS_SUPPRESSION_MS = 60_000;
+const SUCCESS_SUPPRESSION_MS = 90_000;
 const CLICK_WINDOW_MS = 5 * 60_000;
 
 type StreamTuple = readonly [
@@ -76,6 +76,7 @@ export function StreamCard({
     void refetchWithdrawable();
     onChange?.();
     withdrawTx.reset();
+    withdrawClickedAt.current = 0;
   };
   const markCanceled = () => {
     setCanceledAt(Date.now());
@@ -83,6 +84,7 @@ export function StreamCard({
     void refetchWithdrawable();
     onChange?.();
     cancelTx.reset();
+    cancelClickedAt.current = 0;
   };
 
   // Receipt path (normal wallets).
