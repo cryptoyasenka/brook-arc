@@ -87,17 +87,24 @@ export function StreamCard({
     cancelClickedAt.current = 0;
   };
 
+  // Dedup helpers: returns true if this click attempt was already handled, so
+  // receipt + event don't double-fire while successive clicks remain allowed.
+  const withdrawAlreadyHandled = () =>
+    withdrewAt !== null && withdrewAt > withdrawClickedAt.current;
+  const cancelAlreadyHandled = () =>
+    canceledAt !== null && canceledAt > cancelClickedAt.current;
+
   // Receipt path (normal wallets).
   useEffect(() => {
     if (!withdrawReceipt.isSuccess) return;
-    if (withdrewAt && Date.now() - withdrewAt < SUCCESS_SUPPRESSION_MS) return;
+    if (withdrawAlreadyHandled()) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- bridging wagmi receipt state to local UI state
     markWithdrew();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [withdrawReceipt.isSuccess]);
   useEffect(() => {
     if (!cancelReceipt.isSuccess) return;
-    if (canceledAt && Date.now() - canceledAt < SUCCESS_SUPPRESSION_MS) return;
+    if (cancelAlreadyHandled()) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- bridging wagmi receipt state to local UI state
     markCanceled();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -111,7 +118,7 @@ export function StreamCard({
     args: { streamId },
     onLogs: () => {
       if (Date.now() - withdrawClickedAt.current > CLICK_WINDOW_MS) return;
-      if (withdrewAt && Date.now() - withdrewAt < SUCCESS_SUPPRESSION_MS) return;
+      if (withdrawAlreadyHandled()) return;
       markWithdrew();
     },
   });
@@ -122,7 +129,7 @@ export function StreamCard({
     args: { streamId },
     onLogs: () => {
       if (Date.now() - cancelClickedAt.current > CLICK_WINDOW_MS) return;
-      if (canceledAt && Date.now() - canceledAt < SUCCESS_SUPPRESSION_MS) return;
+      if (cancelAlreadyHandled()) return;
       markCanceled();
     },
   });

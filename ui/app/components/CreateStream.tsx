@@ -117,10 +117,16 @@ export function CreateStream({ onCreated }: { onCreated?: () => void }) {
     createClickedAt.current = 0;
   };
 
+  // Dedup helper: returns true if the current click attempt has already been
+  // handled (so receipt + event don't double-fire, but successive clicks aren't
+  // blocked by a stale createdAt timestamp).
+  const alreadyHandledThisClick = () =>
+    createdAt !== null && createdAt > createClickedAt.current;
+
   // Receipt path — works on normal wallets where useWriteContract returns a tx hash.
   useEffect(() => {
     if (!createReceipt.isSuccess) return;
-    if (createdAt && Date.now() - createdAt < SUCCESS_SUPPRESSION_MS) return;
+    if (alreadyHandledThisClick()) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- bridging wagmi receipt state to local UI state
     markCreated();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -139,18 +145,27 @@ export function CreateStream({ onCreated }: { onCreated?: () => void }) {
     enabled: !!address,
     onLogs: () => {
       if (Date.now() - createClickedAt.current > CLICK_WINDOW_MS) return;
-      if (createdAt && Date.now() - createdAt < SUCCESS_SUPPRESSION_MS) return;
+      if (alreadyHandledThisClick()) return;
       markCreated();
     },
   });
 
-  // Mirror for approve — Rabby × Arc preflight error fires on approve too.
-  useEffect(() => {
-    if (!approveReceipt.isSuccess) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- bridging wagmi receipt state to local UI state
+  const approveAlreadyHandled = () =>
+    approvedAt !== null && approvedAt > approveClickedAt.current;
+
+  const markApproved = () => {
     setApprovedAt(Date.now());
     void refetchAllowance();
     approve.reset();
+    approveClickedAt.current = 0;
+  };
+
+  // Mirror for approve — Rabby × Arc preflight error fires on approve too.
+  useEffect(() => {
+    if (!approveReceipt.isSuccess) return;
+    if (approveAlreadyHandled()) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- bridging wagmi receipt state to local UI state
+    markApproved();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [approveReceipt.isSuccess]);
 
@@ -162,11 +177,8 @@ export function CreateStream({ onCreated }: { onCreated?: () => void }) {
     enabled: !!address,
     onLogs: () => {
       if (Date.now() - approveClickedAt.current > CLICK_WINDOW_MS) return;
-      if (approvedAt && Date.now() - approvedAt < SUCCESS_SUPPRESSION_MS) return;
-      setApprovedAt(Date.now());
-      void refetchAllowance();
-      approve.reset();
-      approveClickedAt.current = 0;
+      if (approveAlreadyHandled()) return;
+      markApproved();
     },
   });
 
