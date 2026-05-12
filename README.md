@@ -16,6 +16,28 @@ USDC-as-gas model + EIP-2612 permit support enables a tighter UX than copying th
 implementations. Brook is the smallest correct primitive: one contract, ~170 lines,
 no governance, no upgrade path, no fee, no admin keys.
 
+## Brook's place in Circle's stack
+
+Circle launched the [Agent Stack](https://www.circle.com/blog/introducing-circle-agent-stack-financial-infrastructure-for-the-agentic-economy)
+on 2026-05-11 and has been shipping the agentic-payments rails for several months:
+
+| Layer | Purpose | Time model |
+|---|---|---|
+| [x402](https://x402.org) | HTTP 402 payment negotiation | one-shot, discrete |
+| [Nanopayments](https://developers.circle.com/gateway/nanopayments) | Offchain auth + batched USDC settlement, down to $0.000001 | discrete, batched |
+| [Circle Gateway](https://developers.circle.com/gateway) | The settlement layer beneath Nanopayments | discrete, batched |
+| [Agent Wallets / Marketplace / CLI](https://agents.circle.com) | Policy-controlled holding + service discovery for agents | discrete |
+| **Brook** | **Continuous per-second USDC release between two addresses** | **time-based, continuous** |
+
+Nanopayments handles "agent pays $0.001 per API call" — many discrete events batched
+offchain. Brook handles "agent rents compute for 24 h at 0.05 USDC/min" — one onchain
+authorization that releases linearly over time. Both can live on the same Agent Wallet;
+they cover orthogonal economic models.
+
+Brook does not depend on Agent Stack and works for human ↔ human flows too
+(rent, salary, vesting, subscriptions). It's deliberately scope-limited to the
+streaming primitive so the contract stays auditable.
+
 ## Design at a glance
 
 | | |
