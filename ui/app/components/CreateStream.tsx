@@ -22,10 +22,10 @@ const SUCCESS_SUPPRESSION_MS = 90_000;
 const CLICK_WINDOW_MS = 5 * 60_000;
 
 const DURATION_PRESETS: { label: string; seconds: number }[] = [
-  { label: '2 min', seconds: 120 },
-  { label: '1 hour', seconds: 3600 },
-  { label: '1 day', seconds: 86400 },
-  { label: '1 week', seconds: 604800 },
+  { label: '2 min · demo', seconds: 120 },
+  { label: '1 hour · compute lease', seconds: 3600 },
+  { label: '1 day · compute / subscription', seconds: 86400 },
+  { label: '1 week · subscription', seconds: 604800 },
 ];
 
 export function CreateStream({ onCreated }: { onCreated?: () => void }) {
