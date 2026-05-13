@@ -59,16 +59,29 @@ export function StreamCard({
     query: { refetchInterval: 2_000 },
   });
 
+  const { data: pendingMine, refetch: refetchPending } = useReadContract({
+    address: BROOK_ADDRESS,
+    abi: brookAbi,
+    functionName: 'pendingClaims',
+    args: address ? [address] : undefined,
+    query: { enabled: !!address, refetchInterval: 3_000 },
+  });
+
   const withdrawTx = useWriteContract();
   const withdrawReceipt = useWaitForTransactionReceipt({ hash: withdrawTx.data });
 
   const cancelTx = useWriteContract();
   const cancelReceipt = useWaitForTransactionReceipt({ hash: cancelTx.data });
 
+  const claimTx = useWriteContract();
+  const claimReceipt = useWaitForTransactionReceipt({ hash: claimTx.data });
+
   const [withdrewAt, setWithdrewAt] = useState<number | null>(null);
   const [canceledAt, setCanceledAt] = useState<number | null>(null);
+  const [claimedAt, setClaimedAt] = useState<number | null>(null);
   const withdrawClickedAt = useRef<number>(0);
   const cancelClickedAt = useRef<number>(0);
+  const claimClickedAt = useRef<number>(0);
 
   const markWithdrew = () => {
     setWithdrewAt(Date.now());
@@ -82,9 +95,17 @@ export function StreamCard({
     setCanceledAt(Date.now());
     void refetchStream();
     void refetchWithdrawable();
+    void refetchPending();
     onChange?.();
     cancelTx.reset();
     cancelClickedAt.current = 0;
+  };
+  const markClaimed = () => {
+    setClaimedAt(Date.now());
+    void refetchPending();
+    onChange?.();
+    claimTx.reset();
+    claimClickedAt.current = 0;
   };
 
   // Dedup helpers: returns true if this click attempt was already handled, so
@@ -93,6 +114,8 @@ export function StreamCard({
     withdrewAt !== null && withdrewAt > withdrawClickedAt.current;
   const cancelAlreadyHandled = () =>
     canceledAt !== null && canceledAt > cancelClickedAt.current;
+  const claimAlreadyHandled = () =>
+    claimedAt !== null && claimedAt > claimClickedAt.current;
 
   // Receipt path (normal wallets).
   useEffect(() => {
@@ -134,6 +157,27 @@ export function StreamCard({
     },
   });
 
+  useEffect(() => {
+    if (!claimReceipt.isSuccess) return;
+    if (claimAlreadyHandled()) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- bridging wagmi receipt state to local UI state
+    markClaimed();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claimReceipt.isSuccess]);
+
+  useWatchContractEvent({
+    address: BROOK_ADDRESS,
+    abi: brookAbi,
+    eventName: 'Claimed',
+    args: address ? { claimant: address } : undefined,
+    enabled: !!address,
+    onLogs: () => {
+      if (Date.now() - claimClickedAt.current > CLICK_WINDOW_MS) return;
+      if (claimAlreadyHandled()) return;
+      markClaimed();
+    },
+  });
+
   // Time-decay success banners.
   useEffect(() => {
     if (withdrewAt === null) return;
@@ -145,10 +189,17 @@ export function StreamCard({
     const t = setTimeout(() => setCanceledAt(null), SUCCESS_SUPPRESSION_MS);
     return () => clearTimeout(t);
   }, [canceledAt]);
+  useEffect(() => {
+    if (claimedAt === null) return;
+    const t = setTimeout(() => setClaimedAt(null), SUCCESS_SUPPRESSION_MS);
+    return () => clearTimeout(t);
+  }, [claimedAt]);
 
   const recentWithdrawSuccess = withdrewAt !== null;
   const recentCancelSuccess = canceledAt !== null;
-  const suppressError = recentWithdrawSuccess || recentCancelSuccess;
+  const recentClaimSuccess = claimedAt !== null;
+  const suppressError =
+    recentWithdrawSuccess || recentCancelSuccess || recentClaimSuccess;
 
   if (!stream) {
     return (
@@ -278,16 +329,52 @@ export function StreamCard({
         )}
       </div>
 
-      {!suppressError && (withdrawTx.error || cancelTx.error) && (
+      {pendingMine !== undefined && pendingMine > 0n && (
+        <div className="flex items-center justify-between rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2">
+          <div className="text-xs">
+            <span className="text-neutral-400">your claimable balance:</span>{' '}
+            <span className="font-mono text-emerald-300">
+              {formatUsdc(pendingMine, 4)} USDC
+            </span>
+          </div>
+          <button
+            onClick={() => {
+              if (!address) return;
+              claimClickedAt.current = Date.now();
+              claimTx.writeContract({
+                address: BROOK_ADDRESS,
+                abi: brookAbi,
+                functionName: 'claim',
+                args: [address, pendingMine],
+              });
+            }}
+            disabled={claimTx.isPending || claimReceipt.isLoading}
+            className="px-3 py-1.5 rounded-md bg-emerald-500 text-neutral-950 font-medium text-xs hover:bg-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed transition"
+          >
+            {claimTx.isPending
+              ? 'sign…'
+              : claimReceipt.isLoading
+                ? 'claiming…'
+                : 'claim'}
+          </button>
+        </div>
+      )}
+
+      {!suppressError && (withdrawTx.error || cancelTx.error || claimTx.error) && (
         <div className="text-xs text-red-400 break-words">
-          {withdrawTx.error?.message ?? cancelTx.error?.message}
+          {withdrawTx.error?.message ?? cancelTx.error?.message ?? claimTx.error?.message}
         </div>
       )}
       {recentWithdrawSuccess && (
         <div className="text-xs text-emerald-400">withdraw confirmed</div>
       )}
       {recentCancelSuccess && (
-        <div className="text-xs text-emerald-400">stream canceled</div>
+        <div className="text-xs text-emerald-400">
+          stream canceled — claim your balance below
+        </div>
+      )}
+      {recentClaimSuccess && (
+        <div className="text-xs text-emerald-400">claim confirmed</div>
       )}
     </div>
   );

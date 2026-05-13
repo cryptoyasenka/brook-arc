@@ -38,6 +38,24 @@ export const brookAbi = [
   },
   {
     "type": "function",
+    "name": "claim",
+    "inputs": [
+      {
+        "name": "to",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint128",
+        "internalType": "uint128"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "createStream",
     "inputs": [
       {
@@ -123,6 +141,25 @@ export const brookAbi = [
         "name": "",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pendingClaims",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint128",
+        "internalType": "uint128"
       }
     ],
     "stateMutability": "view"
@@ -245,6 +282,31 @@ export const brookAbi = [
   },
   {
     "type": "event",
+    "name": "Claimed",
+    "inputs": [
+      {
+        "name": "claimant",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint128",
+        "indexed": false,
+        "internalType": "uint128"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "StreamCreated",
     "inputs": [
       {
@@ -323,6 +385,11 @@ export const brookAbi = [
   },
   {
     "type": "error",
+    "name": "InsufficientClaim",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InsufficientWithdrawable",
     "inputs": []
   },
@@ -349,6 +416,11 @@ export const brookAbi = [
   {
     "type": "error",
     "name": "NotSender",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PermitFailedAndAllowanceInsufficient",
     "inputs": []
   },
   {
