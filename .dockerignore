@@ -1,0 +1,42 @@
+# Foundry / Solidity build artifacts — NOT needed in UI image
+out/
+broadcast/
+cache/
+lib/
+deployments/
+script/
+src/
+test/
+foundry.toml
+foundry.lock
+remappings.txt
+
+# Repo metadata
+.git/
+.github/
+.planning/
+docs/
+
+# Node bloat
+ui/node_modules/
+ui/.next/
+ui/.turbo/
+ui/coverage/
+
+# Secrets — never bake into image
+.env
+.env.*
+ui/.env
+ui/.env.*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Misc
+README.md
+LICENSE
+render.yaml
+*.log
