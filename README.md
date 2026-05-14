@@ -80,8 +80,7 @@ Static analysis (Slither): `slither .` — 0 medium+ findings.
 
 ## Web UI
 
-**Live demo:** https://brook-arc-ui-production.up.railway.app (Render free tier — first request after
-inactivity may cold-start in ~50s).
+**Live demo:** https://brook-arc-ui-production.up.railway.app (Railway, instant load).
 
 A Next.js + viem + wagmi + RainbowKit app lives in [`ui/`](./ui). It connects to the
 deployed contract on Arc testnet and lets you create, view, withdraw and cancel streams.
@@ -92,7 +91,7 @@ cd ui && npm install && npm run dev   # http://localhost:3000
 
 One-click deploy of your own:
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/cryptoyasenka/brook-arc)
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new/template?template=https://github.com/cryptoyasenka/brook-arc)
 
 ## Deploy
 
