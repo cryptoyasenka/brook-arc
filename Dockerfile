@@ -5,7 +5,7 @@ FROM node:20-alpine AS build
 WORKDIR /app
 
 COPY ui/package.json ui/package-lock.json ./
-RUN npm ci
+RUN npm install --no-audit --no-fund
 
 COPY ui/. ./
 ENV NEXT_TELEMETRY_DISABLED=1
