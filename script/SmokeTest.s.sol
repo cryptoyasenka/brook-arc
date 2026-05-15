@@ -7,7 +7,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {BrookStream} from "../src/BrookStream.sol";
 
-/// @notice Phase 4.7 — post-deploy smoke-tests against the live Arc testnet.
+/// @notice Post-deploy smoke-tests against the live Arc testnet.
 ///         Three modes, each one transaction. Foundry scripts can't sleep
 ///         across blocks, so the operator runs `create`, waits wall-clock,
 ///         then `withdraw` (or `cancel`).

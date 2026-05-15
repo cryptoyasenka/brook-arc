@@ -11,8 +11,9 @@ import {FeeOnTransferERC20} from "./mocks/FeeOnTransferERC20.sol";
 import {ReentrantERC20} from "./mocks/ReentrantERC20.sol";
 import {BlacklistERC20} from "./mocks/BlacklistERC20.sol";
 
-/// @notice Phase 3 test suite — covers T1–T16 from CONTRACT-DESIGN-AUDIT.md section D
-///         plus fuzz invariants. T17 (fork) lives in BrookStream.fork.t.sol.
+/// @notice Unit + fuzz suite for BrookStream — core cases T1–T16, the
+///         DoS / claim / permit tests, and four fuzz invariants. T17 (fork
+///         against live Arc USDC) lives in BrookStream.fork.t.sol.
 contract BrookStreamTest is Test {
     BrookStream internal brook;
     MockERC20 internal usdc;
