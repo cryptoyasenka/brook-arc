@@ -143,6 +143,10 @@ export function CreateStream({ onCreated }: { onCreated?: () => void }) {
     eventName: 'StreamCreated',
     args: address ? { sender: address } : undefined,
     enabled: !!address,
+    // poll:true → eth_getLogs polling; Arc's eth_newFilter is unreliable on
+    // testnet (filters get re-created and logs slip through the gap).
+    poll: true,
+    pollingInterval: 4000,
     onLogs: () => {
       if (Date.now() - createClickedAt.current > CLICK_WINDOW_MS) return;
       if (alreadyHandledThisClick()) return;
@@ -175,6 +179,8 @@ export function CreateStream({ onCreated }: { onCreated?: () => void }) {
     eventName: 'Approval',
     args: address ? { owner: address, spender: BROOK_ADDRESS } : undefined,
     enabled: !!address,
+    poll: true,
+    pollingInterval: 4000,
     onLogs: () => {
       if (Date.now() - approveClickedAt.current > CLICK_WINDOW_MS) return;
       if (approveAlreadyHandled()) return;

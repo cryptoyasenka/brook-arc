@@ -134,11 +134,18 @@ export function StreamCard({
   }, [cancelReceipt.isSuccess]);
 
   // Event path (Rabby × Arc). Scope by streamId — both events index it.
+  // poll:true forces eth_getLogs polling. Arc's eth_newFilter /
+  // eth_getFilterChanges (viem's default for http) is flaky on testnet —
+  // per-card filters get re-created in a storm and logs fall through the
+  // gap, so the success banner never shows. Plain getLogs is reliable here
+  // (MyStreams scans with it). pollingInterval kept tight for snappy UX.
   useWatchContractEvent({
     address: BROOK_ADDRESS,
     abi: brookAbi,
     eventName: 'Withdrawn',
     args: { streamId },
+    poll: true,
+    pollingInterval: 4000,
     onLogs: () => {
       if (Date.now() - withdrawClickedAt.current > CLICK_WINDOW_MS) return;
       if (withdrawAlreadyHandled()) return;
@@ -150,6 +157,8 @@ export function StreamCard({
     abi: brookAbi,
     eventName: 'Canceled',
     args: { streamId },
+    poll: true,
+    pollingInterval: 4000,
     onLogs: () => {
       if (Date.now() - cancelClickedAt.current > CLICK_WINDOW_MS) return;
       if (cancelAlreadyHandled()) return;
@@ -171,6 +180,8 @@ export function StreamCard({
     eventName: 'Claimed',
     args: address ? { claimant: address } : undefined,
     enabled: !!address,
+    poll: true,
+    pollingInterval: 4000,
     onLogs: () => {
       if (Date.now() - claimClickedAt.current > CLICK_WINDOW_MS) return;
       if (claimAlreadyHandled()) return;
