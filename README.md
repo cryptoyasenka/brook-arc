@@ -120,6 +120,12 @@ SMOKE_STREAM_ID=0 SMOKE_MODE=withdraw \
     --private-key $RECIPIENT_PRIVATE_KEY --broadcast
 ```
 
+The `create` / `withdraw` modes move USDC, and Arc testnet's `eth_estimateGas`
+precompile reverts while simulating USDC `transferFrom`. `forge script` estimates
+gas before broadcasting, so drive those two steps with an explicit gas limit
+(`cast send --gas-limit …`) or through the web UI instead. Deploy and `cancel`
+move no tokens and are unaffected.
+
 ## Contract API
 
 ```solidity
