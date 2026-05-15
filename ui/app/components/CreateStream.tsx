@@ -6,13 +6,13 @@ import {
   useAccount,
   useReadContract,
   useWaitForTransactionReceipt,
-  useWatchContractEvent,
   useWriteContract,
 } from 'wagmi';
 import { brookAbi } from '@/lib/brookAbi';
 import { usdcAbi } from '@/lib/usdcAbi';
 import { BROOK_ADDRESS, USDC_ADDRESS } from '@/lib/addresses';
 import { formatUsdc, parseUsdc } from '@/lib/format';
+import { useLogPoll } from '@/lib/useLogPoll';
 
 // How long after a successful StreamCreated event we suppress a (potentially stale)
 // wagmi error. Covers the Rabby × Arc custom-network preflight quirk where
@@ -137,16 +137,14 @@ export function CreateStream({ onCreated }: { onCreated?: () => void }) {
   // We filter by indexed `sender = address`, so we only see streams this wallet
   // created. We additionally guard with `createClickedAt` so historical events
   // arriving on subscription bootstrap can't be mistaken for the current attempt.
-  useWatchContractEvent({
+  // useLogPoll uses eth_getLogs polling; Arc's eth_newFilter is unreliable on
+  // testnet (filters get re-created and logs slip through the gap).
+  useLogPoll({
     address: BROOK_ADDRESS,
     abi: brookAbi,
     eventName: 'StreamCreated',
     args: address ? { sender: address } : undefined,
     enabled: !!address,
-    // poll:true → eth_getLogs polling; Arc's eth_newFilter is unreliable on
-    // testnet (filters get re-created and logs slip through the gap).
-    poll: true,
-    pollingInterval: 4000,
     onLogs: () => {
       if (Date.now() - createClickedAt.current > CLICK_WINDOW_MS) return;
       if (alreadyHandledThisClick()) return;
@@ -173,14 +171,12 @@ export function CreateStream({ onCreated }: { onCreated?: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [approveReceipt.isSuccess]);
 
-  useWatchContractEvent({
+  useLogPoll({
     address: USDC_ADDRESS,
     abi: usdcAbi,
     eventName: 'Approval',
     args: address ? { owner: address, spender: BROOK_ADDRESS } : undefined,
     enabled: !!address,
-    poll: true,
-    pollingInterval: 4000,
     onLogs: () => {
       if (Date.now() - approveClickedAt.current > CLICK_WINDOW_MS) return;
       if (approveAlreadyHandled()) return;

@@ -5,12 +5,12 @@ import {
   useAccount,
   useReadContract,
   useWaitForTransactionReceipt,
-  useWatchContractEvent,
   useWriteContract,
 } from 'wagmi';
 import { brookAbi } from '@/lib/brookAbi';
 import { BROOK_ADDRESS } from '@/lib/addresses';
 import { formatDuration, formatUsdc, shortAddr } from '@/lib/format';
+import { useLogPoll } from '@/lib/useLogPoll';
 
 // Match CreateStream's suppression window — wagmi error may fire even though the
 // tx confirmed on-chain (Rabby × Arc preflight quirk). Show success when an
@@ -134,31 +134,26 @@ export function StreamCard({
   }, [cancelReceipt.isSuccess]);
 
   // Event path (Rabby × Arc). Scope by streamId — both events index it.
-  // poll:true forces eth_getLogs polling. Arc's eth_newFilter /
-  // eth_getFilterChanges (viem's default for http) is flaky on testnet —
-  // per-card filters get re-created in a storm and logs fall through the
-  // gap, so the success banner never shows. Plain getLogs is reliable here
-  // (MyStreams scans with it). pollingInterval kept tight for snappy UX.
-  useWatchContractEvent({
+  // useLogPoll uses eth_getLogs polling instead of viem's filter-based
+  // watchContractEvent: Arc's eth_newFilter succeeds but silently drops
+  // filters, so logs slip through the gap and the success banner never
+  // shows. Plain getLogs is reliable here (MyStreams scans with it).
+  useLogPoll({
     address: BROOK_ADDRESS,
     abi: brookAbi,
     eventName: 'Withdrawn',
     args: { streamId },
-    poll: true,
-    pollingInterval: 4000,
     onLogs: () => {
       if (Date.now() - withdrawClickedAt.current > CLICK_WINDOW_MS) return;
       if (withdrawAlreadyHandled()) return;
       markWithdrew();
     },
   });
-  useWatchContractEvent({
+  useLogPoll({
     address: BROOK_ADDRESS,
     abi: brookAbi,
     eventName: 'Canceled',
     args: { streamId },
-    poll: true,
-    pollingInterval: 4000,
     onLogs: () => {
       if (Date.now() - cancelClickedAt.current > CLICK_WINDOW_MS) return;
       if (cancelAlreadyHandled()) return;
@@ -174,14 +169,12 @@ export function StreamCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [claimReceipt.isSuccess]);
 
-  useWatchContractEvent({
+  useLogPoll({
     address: BROOK_ADDRESS,
     abi: brookAbi,
     eventName: 'Claimed',
     args: address ? { claimant: address } : undefined,
     enabled: !!address,
-    poll: true,
-    pollingInterval: 4000,
     onLogs: () => {
       if (Date.now() - claimClickedAt.current > CLICK_WINDOW_MS) return;
       if (claimAlreadyHandled()) return;
